@@ -2,9 +2,8 @@
 
 #include "util.h"
 #include <cmath>
+#include <cassert>
 #include <array>
-
-template <typename T> class FibbHeap;
 
 template <typename T>
 class Node {
@@ -20,23 +19,35 @@ class Node {
 
 public:
 
-    std::size_t getDegree() { return degree; }
-    bool        getMark()   { return mark; }
+    Node(T val)
+        : value{val}, degree{0}, size{1}, mark{false},
+          next{nullptr}, prev{nullptr}, child{nullptr}, parent{nullptr}
+    {}
 
-    T &         getValue()  { return value;  }
-    Ref<Node>   getNext()   { return next;   }
-    Ref<Node>   getPrev()   { return prev;   }
-    Ref<Node>   getChild()  { return child;  }
+    std::size_t getDegree()                    { return degree; }
+    bool        getMark()                      { return mark; }
+
+    T &         getValue()                     { return value;  }
+    void        getValue(T value)              { this->value = value; }
+    Ref<Node>   getNext()                      { return next;   }
+    Ref<Node>   getPrev()                      { return prev;   }
+    Ref<Node>   getChild()                     { return child;  }
 
     Ref<Node>   getParent()                    { return parent; }
     void        setParent(Ref<Node<T>> parent) { this->parent = parent; }
 
 
-    void setDegree(std::size_t degree) { this->degree = degree; }
-    void increaseDegree()              { this->degree++;        }
+    void setDegree(std::size_t degree)         { this->degree = degree; }
+    void increaseDegree()                      { this->degree++; }
+    void decreaseDegree()                      { this->degree--; }
 
-    void setMark(bool mark) { this->mark = mark;        }
-    void toggleMark()       { this->mark = !this->mark; }
+    void setMark(bool mark)                    { this->mark = mark;        }
+    void toggleMark()                          { this->mark = !this->mark; }
+
+
+    void addChild(Ref<Node<T>> child) {
+        this->child ? this->child->insertNext(child) : this->child = child;
+    }
 
     void insertPrev(Ref<Node<T>> other) {
         other->next = this;
@@ -59,6 +70,9 @@ public:
     }
 
     void removeNext() {
+        if (next == this) {
+            this->prev = this->next = nullptr;
+        }
         next->next->prev = this;
         next = next->next;
         this->prev = this->next = this;
@@ -71,34 +85,48 @@ class FibbHeap {
     Ref<Node<T>> min;
     std::size_t  size;
 
-    void         consolidate();
-    std::size_t  maxDegree() { return std::floor(std::log10(size)); }
-    void         fibHeapLink(Ref<Node<T>> x, Ref<Node<T>> y);
-    void         removeFromRoot(Ref<Node<T>> x);
+    void consolidate();
+    std::size_t maxDegree() { return std::floor(std::log10(size)); }
+    void fibHeapLink(Ref<Node<T>> x, Ref<Node<T>> y);
+
+	void addToMasterList(Ref<Node<T>> node);
+
+    void cut(Ref<Node<T>> node, Ref<Node<T>> parent);
+    void cascadingCut(Ref<Node<T>> node);
+
+    friend FibbHeap<T> operator|(FibbHeap<T> first, FibbHeap<T> second);
 
 public:
 
     FibbHeap();
-    void          insert(Ref<Node<T>> node);
-    void          remove(Ref<Node<T>> node);
+    void          insertNode(Ref<Node<T>> node);
+    //void          remove(Ref<Node<T>> node);
 
     bool          empty() { return size == 0; }
 
     T             findMin();
     T             extractMin();
     void          decreaseKey(Ref<Node<T>> node, T key);
-    FibbHeap<T> & operator+=(FibbHeap<T> other);
 };
 
 template <typename T>
-void FibbHeap<T>::insert(Ref<Node<T>> node) {
-    node->setDegree(0);
+FibbHeap<T>::FibbHeap()
+    : min{nullptr} {}
+
+template <typename T>
+void FibbHeap<T>::addToMasterList(Ref<Node<T>> node) {
     if (empty()) min = node;
     else {
         min->insertPrev(node);
         if (node->getValue() < min->getValue()) min = node;
     }
     size++;
+}
+
+template <typename T>
+void FibbHeap<T>::insertNode(Ref<Node<T>> node) {
+    node->setDegree(0);
+    addToMasterList(node);
 }
 
 template <typename T>
@@ -116,8 +144,6 @@ T FibbHeap<T>::extractMin() {
             child->setParent(nullptr);
             min->setChild(nullptr);
         }
-        //temp->getNext()->removePrev();
-        //temp->getPrev()->removeNext();
         if (temp == temp->getNext()) min = nullptr;
         else consolidate();
         size--;
@@ -140,23 +166,68 @@ void FibbHeap<T>::consolidate() {
                 y = x;
                 x = temp;
             }
-
+            this->fibHeapLink(y, x);
+            degreeArr[d++] = nullptr;
         }
+        degreeArr[d] = x;
         node = node->getNext();
     }
-
+    min = nullptr;
+    for (auto ref : degreeArr) {
+        if (ref != nullptr) addToMasterList(ref);
+    }
 }
 
 template <typename T>
 void FibbHeap<T>::fibHeapLink(Ref<Node<T>> x, Ref<Node<T>> y) {
-    this->removeFromRoot(y);
+    y->getNext()->removePrev();
+    y->getPrev()->removeNext();
     x->addChild(y);
     y->setMark(false);
 }
 
 template <typename T>
-void FibbHeap<T>::removeFromRoot(Ref<Node<T>> x) {
-    Ref<Node<T>> temp = min;
-    while (temp->getNext() != x) temp = temp->getNext();
-    temp->removeNext();
+void FibbHeap<T>::decreaseKey(Ref<Node<T>> node, T key) {
+    assert(key <= node->getValue());
+    node->setValue(key);
+    auto parent = node->getParent();
+    if (parent != nullptr && node->getValue() < parent->getValue()) {
+        cut(node, parent);
+        cascadingCut(parent);
+    }
+    if (node->getValue() < min->getValue()) min = node;
+}
+
+template <typename T>
+void FibbHeap<T>::cut(Ref<Node<T>> node, Ref<Node<T>> parent) {
+    node->getNext()->removePrev();
+    node->getPrev()->removeNext();
+    parent->decreaseDegree();
+    addToMasterList(node);
+    node->setParent(nullptr);
+    node->setMark(false);
+}
+
+template <typename T>
+void FibbHeap<T>::cascadingCut(Ref<Node<T>> node) {
+    auto parent = node->getParent();
+    if (parent != nullptr) {
+        if (!node->getMark()) node->toggleMark();
+        else {
+            cut(node, parent);
+            cascadingCut(parent);
+        }
+    }
+}
+
+template <typename T>
+FibbHeap<T> operator|(FibbHeap<T> first, FibbHeap<T> second) {
+    FibbHeap<T> U;
+    U.min = first.min;
+    U.size = first.size;
+    while (second.min->getNext() != nullptr) {
+        U.insertNode(second.min->getNext());
+        second.min->removeNext();
+    }
+    return U;
 }
