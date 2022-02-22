@@ -1,1 +1,0 @@
-/usr/bin/c++ -g CMakeFiles/Masters.dir/main.cc.o -o Masters 
